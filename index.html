@@ -16,6 +16,8 @@
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"Store","name":"Rancho Ferreira","url":"https://ranchoferreira.cl","telephone":"+56961001212","address":{"@type":"PostalAddress","streetAddress":"Ulriksen 2965, Local 4","addressLocality":"La Serena","addressRegion":"Coquimbo","addressCountry":"CL"},"openingHoursSpecification":[{"@type":"OpeningHoursSpecification","dayOfWeek":["Monday","Tuesday","Wednesday","Thursday","Friday"],"opens":"10:30","closes":"18:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":"Saturday","opens":"10:30","closes":"14:00"}],"sameAs":["https://www.instagram.com/rancho_ferreira/"]}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet"/>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--red:#D40000;--red-dark:#A00000;--black:#0A0A0A;--dark:#141414;--dark-card:#1C1C1C;--gray:#2A2A2A;--border:#2E2E2E;--white:#FFFFFF;--text:#E0E0E0;--muted:#888}
@@ -649,6 +651,13 @@ footer{background:var(--dark);border-top:3px solid var(--red)}
 <div class="toast" id="toast"></div>
 <script>
 const SK='ranchoF_v4',CK='ranchoF_cart4';
+// ===== FIREBASE INIT =====
+const firebaseConfig={apiKey:"AIzaSyAlDbg2K_IMZwuT5vd0U_jR9u95RaWYGxY",authDomain:"rancho-ferreira-11d8a.firebaseapp.com",databaseURL:"https://rancho-ferreira-11d8a-default-rtdb.firebaseio.com",projectId:"rancho-ferreira-11d8a",storageBucket:"rancho-ferreira-11d8a.firebasestorage.app",messagingSenderId:"697666510678",appId:"1:697666510678:web:92f80302faccafe06dc0f7"};
+const fbApp=firebase.initializeApp(firebaseConfig);
+const fbDb=firebase.database();
+const fbRef=fbDb.ref('appData');
+let firebaseReady=false;
+let savingToFirebase=false;
 // ===== DEFAULT DATA =====
 const defaultHeroSlides=[
   {tag:'Nueva Temporada',title:'VIVE EL\nMOTOCROSS',desc:'Equipamiento premium para MX y MTB. Las mejores marcas, los mejores precios.',img:'hero1.jpg',fallback:'https://images.unsplash.com/photo-1544191696-15693e380f26?w=1600&q=80'},
@@ -705,6 +714,20 @@ function migrateData(d){
 let appDataBase={products:JSON.parse(JSON.stringify(defaultProducts)),config:{...defaultConfig},heroSlides:JSON.parse(JSON.stringify(defaultHeroSlides)),categories:JSON.parse(JSON.stringify(defaultCategories)),brands:JSON.parse(JSON.stringify(defaultBrands)),discountCodes:JSON.parse(JSON.stringify(defaultDiscountCodes))};
 let appData=JSON.parse(JSON.stringify(appDataBase));
 try{const _s=JSON.parse(localStorage.getItem(SK)||'null');if(_s&&_s.products){appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),_s);migrateData(appData)}}catch(e){}
+// Firebase realtime listener
+fbRef.on('value',snap=>{
+  const d=snap.val();
+  if(!d||!d.products||savingToFirebase)return;
+  firebaseReady=true;
+  appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
+  migrateData(appData);
+  try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+  if(document.readyState==='complete'||document.readyState==='interactive'){
+    initHero();renderCatBar();renderBrandsMarquee();renderBrandsGrid();renderProducts();
+    const sp=document.getElementById('statProductos');if(sp)sp.textContent=appData.products.filter(p=>p.active).length+'+';
+    if(adminUnlocked)renderAdminTabContent();
+  }
+},err=>{console.warn('Firebase read error:',err);firebaseReady=true;});
 let cart=[];try{cart=JSON.parse(localStorage.getItem(CK)||'[]')}catch(e){}
 let currentCat='all',currentBrand=null,currentSearch='';
 let currentDiscount=null;
@@ -714,7 +737,8 @@ let footerClicks=0,footerTimer=null;
 let adminUnlocked=false,adminPin='',adminTab='products',adminEditId=null,editingVariants=[];
 
 // ===== PERSISTENCE =====
-function saveData(){try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){showToast('⚠️ Sin espacio para guardar')}}
+function saveData(){try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+if(firebaseReady){savingToFirebase=true;fbRef.set(appData).then(()=>{savingToFirebase=false}).catch(err=>{savingToFirebase=false;console.warn('Firebase save error:',err)})}}
 function exportData(){const j=JSON.stringify(appData,null,2);const b=new Blob([j],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='rancho_ferreira_data.json';a.click();URL.revokeObjectURL(u);showToast('✅ Datos exportados')}
 function triggerImport(){document.getElementById('importFileInput')?.click()}
 function importData(ev){const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{const d=JSON.parse(e.target.result);appData=Object.assign({},appDataBase,d);migrateData(appData);saveData();initHero();renderCatBar();renderBrandsMarquee();renderBrandsGrid();renderProducts();showToast('✅ Datos importados');if(adminUnlocked)renderAdminTabContent()}catch(err){showToast('⚠️ Archivo inválido')}};r.readAsText(f);ev.target.value=''}
@@ -1476,8 +1500,10 @@ function deleteDiscount(i){if(!confirm('¿Borrar este código?'))return;appData.
 // ─── EXPORT/IMPORT ADMIN ───
 function renderAdminExport(){
   const size=(()=>{try{const s=localStorage.getItem(SK);return s?(s.length/1024).toFixed(1)+' KB':'—'}catch(e){return'—'}})();
-  return`<h3 style="font-family:'Oswald';font-size:.95rem;color:#fff;text-transform:uppercase;margin-bottom:.5rem">Exportar / Importar Datos</h3>
-  <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.4rem;line-height:1.7">Los datos se guardan en el navegador de tu dispositivo. Para compartirlos entre computadores usa exportar/importar.</p>
+  const syncStatus=firebaseReady?'<span style="color:#4ade80">✅ Sincronización en la nube ACTIVA</span>':'<span style="color:#f87171">⚠️ Sin conexión a la nube</span>';
+  return`<h3 style="font-family:'Oswald';font-size:.95rem;color:#fff;text-transform:uppercase;margin-bottom:.5rem">Sincronización & Datos</h3>
+  <div style="background:var(--gray);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin-bottom:1.2rem;max-width:580px;font-size:.82rem">${syncStatus}<br><span style="color:var(--muted);font-size:.76rem">Los cambios se sincronizan automáticamente en todos los dispositivos.</span></div>
+  <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.4rem;line-height:1.7">También puedes exportar/importar datos manualmente como respaldo.</p>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:580px">
     <div style="background:var(--gray);border:1px solid var(--border);border-radius:10px;padding:1.2rem">
       <div style="font-size:2rem;margin-bottom:.5rem">📤</div>
@@ -1493,12 +1519,8 @@ function renderAdminExport(){
     </div>
   </div>
   <div style="margin-top:1.4rem;padding:1rem;background:var(--gray);border:1px solid var(--border);border-radius:8px;max-width:580px">
-    <h4 style="font-family:'Oswald';color:#fff;font-size:.88rem;margin-bottom:.5rem">💡 Cómo sincronizar entre dispositivos</h4>
-    <ol style="font-size:.76rem;color:var(--muted);padding-left:1.2rem;line-height:2">
-      <li>En el dispositivo con los cambios → haz clic en <strong style="color:#fff">Descargar JSON</strong></li>
-      <li>Envíate el archivo por WhatsApp o email</li>
-      <li>En el otro dispositivo → Admin → Exportar → <strong style="color:#fff">Cargar JSON</strong></li>
-    </ol>
+    <h4 style="font-family:'Oswald';color:#fff;font-size:.88rem;margin-bottom:.5rem">☁️ Sincronización automática</h4>
+    <p style="font-size:.76rem;color:var(--muted);line-height:2">Todos los cambios (productos, fotos, banners, marcas) se sincronizan automáticamente en la nube. Cualquier cambio que hagas desde el admin se verá reflejado en todos los dispositivos al instante.</p>
   </div>`;
 }
 document.addEventListener('DOMContentLoaded',()=>{
@@ -1512,6 +1534,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   initBackTop();
   const sp=document.getElementById('statProductos');
   if(sp)sp.textContent=appData.products.filter(p=>p.active).length+'+';
+  // Push local data to Firebase if DB is empty (first-time setup)
+  fbRef.once('value').then(snap=>{firebaseReady=true;if(!snap.val()){fbRef.set(appData).catch(e=>console.warn('Firebase init push error:',e))}});
 });
 </script>
 </body>
