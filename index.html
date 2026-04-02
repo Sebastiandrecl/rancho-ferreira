@@ -645,7 +645,24 @@ footer{background:var(--dark);border-top:3px solid var(--red)}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script>
+// ===== FIREBASE INIT =====
+const firebaseConfig={
+  apiKey:"AIzaSyAlDbg2K_IMZwuT5vd0U_jR9u95RaWYGxY",
+  authDomain:"rancho-ferreira-11d8a.firebaseapp.com",
+  databaseURL:"https://rancho-ferreira-11d8a-default-rtdb.firebaseio.com",
+  projectId:"rancho-ferreira-11d8a",
+  storageBucket:"rancho-ferreira-11d8a.firebasestorage.app",
+  messagingSenderId:"697666510678",
+  appId:"1:697666510678:web:92f80302faccafe06dc0f7",
+  measurementId:"G-R3CY1WFWGW"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+const dbRef=db.ref('appData');
+
 const SK='ranchoF_v4',CK='ranchoF_cart4';
 // ===== DEFAULT DATA =====
 const defaultHeroSlides=[
@@ -712,7 +729,10 @@ let footerClicks=0,footerTimer=null;
 let adminUnlocked=false,adminPin='',adminTab='products',adminEditId=null,editingVariants=[];
 
 // ===== PERSISTENCE =====
-function saveData(){try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){showToast('⚠️ Sin espacio para guardar')}}
+function saveData(){
+  try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+  try{dbRef.set(appData)}catch(e){showToast('⚠️ Error guardando en Firebase')}
+}
 function exportData(){const j=JSON.stringify(appData,null,2);const b=new Blob([j],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='rancho_ferreira_data.json';a.click();URL.revokeObjectURL(u);showToast('✅ Datos exportados')}
 function triggerImport(){document.getElementById('importFileInput')?.click()}
 function importData(ev){const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{const d=JSON.parse(e.target.result);appData=Object.assign({},appDataBase,d);migrateData(appData);saveData();initHero();renderCatBar();renderBrandsMarquee();renderBrandsGrid();renderProducts();showToast('✅ Datos importados');if(adminUnlocked)renderAdminTabContent()}catch(err){showToast('⚠️ Archivo inválido')}};r.readAsText(f);ev.target.value=''}
@@ -1509,7 +1529,7 @@ function renderAdminExport(){
     </ol>
   </div>`;
 }
-document.addEventListener('DOMContentLoaded',()=>{
+function renderAll(){
   initHero();
   renderCatBar();
   renderBrandsMarquee();
@@ -1520,6 +1540,20 @@ document.addEventListener('DOMContentLoaded',()=>{
   initBackTop();
   const sp=document.getElementById('statProductos');
   if(sp)sp.textContent=appData.products.filter(p=>p.active).length+'+';
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  // Load from Firebase first, fallback to localStorage/defaults
+  dbRef.once('value').then(snap=>{
+    const d=snap.val();
+    if(d&&d.products){
+      appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
+      migrateData(appData);
+      try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+    }
+    renderAll();
+  }).catch(()=>{
+    renderAll();
+  });
 });
 </script>
 </body>
