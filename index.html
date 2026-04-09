@@ -705,16 +705,31 @@ const defaultDiscountCodes=[
   {id:1,code:'BIENVENIDO10',type:'percent',value:10,minOrder:0,maxUses:null,uses:0,active:true},
   {id:2,code:'VERANO20',type:'percent',value:20,minOrder:50000,maxUses:100,uses:0,active:true}
 ];
-// Migration: v3 → v4 (single cat → cats[], single img → imgs[])
+// Migration: v3 → v4 (single cat → cats[], single img → imgs[], fix missing sizes)
 function migrateData(d){
   if(!d)return null;
-  if(d.products){d.products.forEach(p=>{
-    if(p.cat&&!p.cats)p.cats=[p.cat];
-    if(!p.cats||!p.cats.length)p.cats=['ropa'];
-    if(!p.imgs)p.imgs=[];
-    if(p.variants)p.variants.forEach(v=>{if(v.img&&!v.imgs)v.imgs=[v.img];if(!v.imgs)v.imgs=[];});
-  });}
-  if(!d.discountCodes)d.discountCodes=JSON.parse(JSON.stringify(defaultDiscountCodes));
+  if(d.products){
+    // Firebase can convert arrays to objects with numeric keys — fix that
+    if(!Array.isArray(d.products)){d.products=Object.values(d.products)}
+    d.products.forEach(p=>{
+      if(p.cat&&!p.cats)p.cats=[p.cat];
+      if(!p.cats||!p.cats.length)p.cats=['ropa'];
+      if(!p.imgs)p.imgs=[];
+      if(p.variants){
+        if(!Array.isArray(p.variants))p.variants=Object.values(p.variants);
+        p.variants.forEach(v=>{
+          if(v.img&&!v.imgs)v.imgs=[v.img];
+          if(!v.imgs)v.imgs=[];
+          if(!Array.isArray(v.sizes))v.sizes=[{size:'Única',stock:5}];
+        });
+      }
+    });
+  }
+  if(d.heroSlides&&!Array.isArray(d.heroSlides))d.heroSlides=Object.values(d.heroSlides);
+  if(d.categories&&!Array.isArray(d.categories))d.categories=Object.values(d.categories);
+  if(d.brands&&!Array.isArray(d.brands))d.brands=Object.values(d.brands);
+  if(d.discountCodes){if(!Array.isArray(d.discountCodes))d.discountCodes=Object.values(d.discountCodes)}
+  else{d.discountCodes=JSON.parse(JSON.stringify(defaultDiscountCodes))}
   return d;
 }
 let appDataBase={products:JSON.parse(JSON.stringify(defaultProducts)),config:{...defaultConfig},heroSlides:JSON.parse(JSON.stringify(defaultHeroSlides)),categories:JSON.parse(JSON.stringify(defaultCategories)),brands:JSON.parse(JSON.stringify(defaultBrands)),discountCodes:JSON.parse(JSON.stringify(defaultDiscountCodes))};
@@ -853,7 +868,7 @@ function getFilteredProducts(){
 function getProductImg(p){if(p.variants&&p.variants[0]){if(p.variants[0].imgs&&p.variants[0].imgs[0])return p.variants[0].imgs[0];if(p.variants[0].img)return p.variants[0].img}return p.img||''}
 function getProductStock(p){
   if(!p.variants||!p.variants.length)return p.stock||null;
-  return p.variants.reduce((sum,v)=>sum+v.sizes.reduce((s2,sz)=>s2+(sz.stock||0),0),0);
+  return p.variants.reduce((sum,v)=>sum+(Array.isArray(v.sizes)?v.sizes.reduce((s2,sz)=>s2+(sz.stock||0),0):0),0);
 }
 function renderProducts(){
   const grid=document.getElementById('productGrid');
@@ -1000,7 +1015,7 @@ function selectColor(vi){
   if(sizeWrap)sizeWrap.style.display='block';
   const sizeLbl=document.getElementById('selectedSizeLabel');if(sizeLbl)sizeLbl.textContent='—';
   const sizeGrid=document.getElementById('sizeGrid');
-  if(sizeGrid)sizeGrid.innerHTML=v.sizes.map(sz=>{
+  if(sizeGrid)sizeGrid.innerHTML=(v.sizes||[]).map(sz=>{
     const cls=sz.stock===0?'size-out':sz.stock<=3?'size-low':'';
     return`<button class="size-btn ${cls}" onclick="${sz.stock>0?`selectSize('${sz.size}')`:''}" ${sz.stock===0?'disabled':''} title="${sz.stock} en stock">${sz.size}</button>`;
   }).join('');
@@ -1542,18 +1557,19 @@ function renderAll(){
   if(sp)sp.textContent=appData.products.filter(p=>p.active).length+'+';
 }
 document.addEventListener('DOMContentLoaded',()=>{
-  // Load from Firebase first, fallback to localStorage/defaults
+  // Render immediately with localStorage data (fast first paint)
+  migrateData(appData);
+  renderAll();
+  // Then load from Firebase and re-render if data differs
   dbRef.once('value').then(snap=>{
     const d=snap.val();
     if(d&&d.products){
       appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
       migrateData(appData);
       try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+      renderAll();
     }
-    renderAll();
-  }).catch(()=>{
-    renderAll();
-  });
+  }).catch(()=>{/* already rendered with local data */});
 });
 </script>
 </body>
