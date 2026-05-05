@@ -1557,19 +1557,71 @@ function renderAll(){
   if(sp)sp.textContent=appData.products.filter(p=>p.active).length+'+';
 }
 document.addEventListener('DOMContentLoaded',()=>{
-  // Render immediately with localStorage data (fast first paint)
-  migrateData(appData);
-  renderAll();
-  // Live listener: re-renders whenever Firebase data changes (any device, any user)
+  let rendered=false;
+  let hadCache=false;
+  try{const _s=JSON.parse(localStorage.getItem(SK)||'null');if(_s&&_s.products&&_s.products.length)hadCache=true}catch(e){}
+
+  // Loading overlay (only shown if no cache)
+  function showLoader(){
+    if(document.getElementById('fbLoader'))return;
+    const o=document.createElement('div');
+    o.id='fbLoader';
+    o.style.cssText='position:fixed;inset:0;background:#0a0a0a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;font-family:Inter,system-ui,sans-serif;gap:18px;transition:opacity .25s';
+    o.innerHTML='<div style="width:46px;height:46px;border:3px solid #2a2a2a;border-top-color:#ff6b00;border-radius:50%;animation:fbspin 0.9s linear infinite"></div><div style="font-size:14px;letter-spacing:.08em;text-transform:uppercase;opacity:.85">Cargando catálogo</div><style>@keyframes fbspin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(o);
+  }
+  function hideLoader(){
+    const o=document.getElementById('fbLoader');
+    if(!o)return;
+    o.style.opacity='0';
+    setTimeout(()=>o.remove(),250);
+  }
+  function applyData(d){
+    if(!d||!d.products)return false;
+    appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
+    migrateData(appData);
+    try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+    hideLoader();
+    renderAll();
+    rendered=true;
+    return true;
+  }
+
+  if(hadCache){
+    // Fast first paint with cached data
+    migrateData(appData);
+    renderAll();
+    rendered=true;
+  } else {
+    // No cache: show loader instead of defaults to avoid flash of wrong content
+    showLoader();
+  }
+
+  // FAST PATH: REST API fetch (much faster than SDK init on mobile, typically 200-500ms)
+  const REST_URL=firebaseConfig.databaseURL.replace(/\/$/,'')+'/appData.json';
+  fetch(REST_URL,{cache:'no-store'}).then(r=>r.ok?r.json():null).then(d=>{
+    if(d&&d.products&&!rendered)applyData(d);
+    else if(d&&d.products&&rendered){
+      // Already rendered from cache; refresh silently if data differs
+      const cur=JSON.stringify(appData.products);
+      const fresh=JSON.stringify(d.products);
+      if(cur!==fresh)applyData(d);
+    }
+  }).catch(e=>console.error('REST fetch error:',e));
+
+  // LIVE PATH: SDK listener for real-time updates (admin changes propagate instantly)
   dbRef.on('value',snap=>{
     const d=snap.val();
-    if(d&&d.products){
-      appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
-      migrateData(appData);
-      try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
-      renderAll();
-    }
-  },err=>{console.error('Firebase read error:',err);});
+    if(d&&d.products)applyData(d);
+  },err=>{
+    console.error('Firebase read error:',err);
+    if(!rendered){hideLoader();migrateData(appData);renderAll();rendered=true;}
+  });
+
+  // SAFETY NET: fallback to defaults if nothing loads in 8s
+  setTimeout(()=>{
+    if(!rendered){hideLoader();migrateData(appData);renderAll();rendered=true;}
+  },8000);
 });
 </script>
 </body>
