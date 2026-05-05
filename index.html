@@ -746,7 +746,7 @@ let adminUnlocked=false,adminPin='',adminTab='products',adminEditId=null,editing
 // ===== PERSISTENCE =====
 function saveData(){
   try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
-  try{dbRef.set(appData)}catch(e){showToast('⚠️ Error guardando en Firebase')}
+  dbRef.set(appData).catch(e=>{console.error('Firebase save error:',e);showToast('⚠️ Error guardando en Firebase: '+(e&&e.message?e.message:'permiso denegado'))});
 }
 function exportData(){const j=JSON.stringify(appData,null,2);const b=new Blob([j],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='rancho_ferreira_data.json';a.click();URL.revokeObjectURL(u);showToast('✅ Datos exportados')}
 function triggerImport(){document.getElementById('importFileInput')?.click()}
@@ -1560,8 +1560,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Render immediately with localStorage data (fast first paint)
   migrateData(appData);
   renderAll();
-  // Then load from Firebase and re-render if data differs
-  dbRef.once('value').then(snap=>{
+  // Live listener: re-renders whenever Firebase data changes (any device, any user)
+  dbRef.on('value',snap=>{
     const d=snap.val();
     if(d&&d.products){
       appData=Object.assign(JSON.parse(JSON.stringify(appDataBase)),d);
@@ -1569,7 +1569,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
       renderAll();
     }
-  }).catch(()=>{/* already rendered with local data */});
+  },err=>{console.error('Firebase read error:',err);});
 });
 </script>
 </body>
