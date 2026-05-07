@@ -819,9 +819,34 @@ let footerClicks=0,footerTimer=null;
 let adminUnlocked=false,adminPin='',adminTab='products',adminEditId=null,editingVariants=[];
 
 // ===== PERSISTENCE =====
+// SAFETY: Refuse to write base64 images back to Firebase.
+// If found, it means we have stale data in memory — abort and let the user reload.
+function _hasBase64(obj){
+  try{return JSON.stringify(obj).indexOf('data:image/')>=0}catch(e){return false}
+}
 function saveData(){
   try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
-  dbRef.set(appData).catch(e=>{console.error('Firebase save error:',e);showToast('⚠️ Error guardando en Firebase: '+(e&&e.message?e.message:'permiso denegado'))});
+  if(_hasBase64(appData)){
+    console.error('Refusing to save: appData contains base64 images (stale state)');
+    showToast('⚠️ Datos desactualizados. Recargá la página antes de guardar.');
+    return;
+  }
+  dbRef.set(appData).catch(e=>{console.error('Firebase save error:',e);showToast('⚠️ Error guardando: '+(e&&e.message?e.message:'permiso denegado'))});
+}
+// Save just one product (or new product) to its child path — avoids overwriting unrelated data.
+function saveProductSingle(idx,product){
+  if(_hasBase64(product)){
+    console.error('Refusing to save product: contains base64');
+    showToast('⚠️ La imagen no terminó de subir. Esperá un momento e intenta de nuevo.');
+    return Promise.reject(new Error('base64 detected'));
+  }
+  // Mirror to localStorage too
+  try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+  return dbRef.child('products').child(idx).set(product).catch(e=>{
+    console.error('Firebase product save error:',e);
+    showToast('⚠️ Error guardando producto: '+(e&&e.message?e.message:'?'));
+    throw e;
+  });
 }
 function exportData(){const j=JSON.stringify(appData,null,2);const b=new Blob([j],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='rancho_ferreira_data.json';a.click();URL.revokeObjectURL(u);showToast('✅ Datos exportados')}
 function triggerImport(){document.getElementById('importFileInput')?.click()}
@@ -1378,17 +1403,46 @@ function saveProduct(){
   const featuresRaw=(document.getElementById('ap_features')?.value||'').trim();
   const features=featuresRaw?featuresRaw.split('\n').map(f=>f.trim()).filter(Boolean):[];
   const variants=editingVariants.filter(v=>v.color).map(v=>({...v,imgs:v.imgs||[],img:v.imgs&&v.imgs[0]?v.imgs[0]:(v.img||'')}));
+  let savedIdx, savedProd;
   if(adminEditId==='new'){
     const newId=Math.max(0,...appData.products.map(p=>p.id))+1;
-    appData.products.push({id:newId,name,brand,cats,cat:cats[0]||'ropa',price,oldPrice,img,desc,badge:badge||null,features,variants,active});
+    savedProd={id:newId,name,brand,cats,cat:cats[0]||'ropa',price,oldPrice,img,desc,badge:badge||null,features,variants,active};
+    appData.products.push(savedProd);
+    savedIdx=appData.products.length-1;
   }else{
-    const idx=appData.products.findIndex(p=>p.id===adminEditId);
-    if(idx>=0)Object.assign(appData.products[idx],{name,brand,cats,cat:cats[0]||'ropa',price,oldPrice,img,desc,badge:badge||null,features,variants,active});
+    savedIdx=appData.products.findIndex(p=>p.id===adminEditId);
+    if(savedIdx>=0){
+      Object.assign(appData.products[savedIdx],{name,brand,cats,cat:cats[0]||'ropa',price,oldPrice,img,desc,badge:badge||null,features,variants,active});
+      savedProd=appData.products[savedIdx];
+    }
   }
-  saveData();adminEditId=null;editingVariants=[];renderAdminTabContent();renderProducts();showToast('✅ Producto guardado');
+  // Save ONLY this product to its child path — does NOT overwrite the entire DB
+  if(savedProd&&savedIdx>=0){
+    saveProductSingle(savedIdx,savedProd).then(()=>{
+      try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}
+      adminEditId=null;editingVariants=[];renderAdminTabContent();renderProducts();
+      showToast('✅ Producto guardado');
+    }).catch(()=>{/* error toast already shown */});
+  }
 }
-function toggleProduct(id){const p=appData.products.find(x=>x.id===id);if(p){p.active=!p.active;saveData();renderAdminTabContent();renderProducts();showToast(p.active?'✅ Activado':'🔒 Ocultado')}}
-function deleteProduct(id){if(!confirm('¿Eliminar producto?'))return;appData.products=appData.products.filter(p=>p.id!==id);saveData();renderAdminTabContent();renderProducts();showToast('🗑 Eliminado')}
+function toggleProduct(id){
+  const idx=appData.products.findIndex(x=>x.id===id);
+  if(idx<0)return;
+  appData.products[idx].active=!appData.products[idx].active;
+  // Only write the active flag of this one product
+  dbRef.child('products').child(idx).child('active').set(appData.products[idx].active)
+    .then(()=>{try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}; renderAdminTabContent();renderProducts();showToast(appData.products[idx].active?'✅ Activado':'🔒 Ocultado')})
+    .catch(e=>showToast('⚠️ Error: '+(e&&e.message?e.message:'?')));
+}
+function deleteProduct(id){
+  if(!confirm('¿Eliminar producto?'))return;
+  appData.products=appData.products.filter(p=>p.id!==id);
+  if(_hasBase64(appData.products)){showToast('⚠️ Datos desactualizados. Recargá la página.');return;}
+  // Only rewrite the products array, not the whole appData
+  dbRef.child('products').set(appData.products)
+    .then(()=>{try{localStorage.setItem(SK,JSON.stringify(appData))}catch(e){}; renderAdminTabContent();renderProducts();showToast('🗑 Eliminado')})
+    .catch(e=>showToast('⚠️ Error eliminando: '+(e&&e.message?e.message:'?')));
+}
 
 // ─── HERO ADMIN ───
 function renderAdminHero(){
